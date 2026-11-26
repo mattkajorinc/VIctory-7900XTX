@@ -48,13 +48,22 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
     }
     let bad = std::fs::read_to_string(&bad_file).unwrap_or_default();
     let bad: HashSet<&str> = bad.lines().filter_map(|l| l.split(' ').next()).collect();
-    let early = std::fs::read_to_string(dir.join("early-pipelines.txt")).unwrap_or_default();
+    let early_file = dir.join("early-pipelines.txt");
+    let early = std::fs::read_to_string(&early_file).unwrap_or_default();
     let early: HashSet<&str> = early.lines().collect();
+    if used && early.is_empty() {
+        println!(
+            "no early-pipelines.txt in {}; a run with VICTORY_PIPELINE_BOOK=1 writes it, and --used makes nothing without it",
+            dir.display()
+        );
+    }
     // Those earlier runs drew with first, the others in no order (by key).
+    // `--again` makes the ones made before too, and the ones that ended a process
+    // (a compiler crash is of the driver and the translator, not of the pipeline).
     let mut all: Vec<usize> = (0..keys.len())
         .filter(|&n| {
             let key = keys[n].as_str();
-            (again || !done.contains(key)) && !bad.contains(key) && (!used || early.contains(key))
+            (again || !done.contains(key)) && (again || !bad.contains(key)) && (!used || early.contains(key))
         })
         .collect();
     all.sort_by_key(|&n| (!early.contains(keys[n].as_str()), &keys[n]));
@@ -62,10 +71,11 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
     let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
     let jobs = jobs.unwrap_or(cores * 2 / 3).max(1);
     println!(
-        "{} pipelines known, {} made before ({fingerprint}), {} bad; {} to make, {jobs} processes",
+        "{} pipelines known, {} made before ({fingerprint}), {} bad{}; {} to make, {jobs} processes",
         keys.len(),
         done.len(),
         bad.len(),
+        if again && !bad.is_empty() { " (retried with --again)" } else { "" },
         all.len()
     );
     let chunks: Vec<&[usize]> = all.chunks(AT_ONCE).collect();
@@ -89,7 +99,7 @@ pub fn run(jobs: Option<usize>, limit: Option<usize>, again: bool, used: bool, t
                             state.0.push(ms);
                             state.1 += usize::from(!there);
                             let count = state.0.len();
-                            if count % 1000 == 0 {
+                            if count.is_multiple_of(1000) {
                                 println!("{count} of {}, {:.0} s", all.len(), began.elapsed().as_secs_f64());
                             }
                             drop(state);
@@ -145,8 +155,15 @@ fn child(these: &[usize], mut each: impl FnMut(usize, f64, bool)) -> (usize, Opt
             .creation_flags(IDLE_PRIORITY_CLASS)
             .spawn()
     });
-    let Ok(mut process) = spawned else { return (these.len(), None) };
-    let Some(out) = process.stdout.take() else { return (these.len(), None) };
+    let Ok(mut process) = spawned else {
+        // Nothing started, so nothing was made: say so, with the reason, and let the
+        // caller mark what it was at and try the rest in a new process.
+        let why = spawned.unwrap_err().to_string();
+        return (0, Some(format!("could not start the process: {why}")));
+    };
+    let Some(out) = process.stdout.take() else {
+        return (0, Some("could not read the process's output".into()));
+    };
     let process = Mutex::new(process);
     let (heard, over) = (Mutex::new(Instant::now()), AtomicBool::new(false));
     let hung = AtomicBool::new(false);

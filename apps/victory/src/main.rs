@@ -117,7 +117,7 @@ enum Command {
         /// At most this many pipelines.
         #[arg(long)]
         limit: Option<usize>,
-        /// Those made before too.
+        /// Those made before too, and the ones that ended a process.
         #[arg(long)]
         again: bool,
         /// Only the pipelines earlier runs drew with.
