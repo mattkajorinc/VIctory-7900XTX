@@ -2246,6 +2246,8 @@ struct Deferred {
     filled: std::collections::HashMap<(usize, usize), u64, std::hash::BuildHasherDefault<AddressHash>>,
     /// Textures whose contents the list brings up to date.
     textures: std::collections::HashSet<usize>,
+    /// BVH preparation is keyed separately from texture and sentinel keys.
+    builder_memory: std::collections::HashSet<crate::memory::BuilderMemoryUse>,
     /// Bottom-of-pipe writes, done once the list has run: address, what,
     /// bytes.
     writes: Vec<(usize, crate::queue::Written, usize)>,
@@ -2270,6 +2272,10 @@ struct Deferred {
 }
 
 impl Deferred {
+    fn first_builder_memory_use(&mut self, key: crate::memory::BuilderMemoryUse) -> bool {
+        self.builder_memory.insert(key)
+    }
+
     /// Holds `buffer` (`size` bytes of upload memory) until the list is
     /// reset.
     fn hold_upload(&mut self, buffer: ID3D12Resource, size: u64) {
@@ -2285,6 +2291,31 @@ impl Deferred {
         self.refreshed.clear();
         self.gpu_written.clear();
         self.filled.clear();
+    }
+}
+
+#[cfg(test)]
+mod builder_memory_keys {
+    use super::Deferred;
+    use crate::memory::BuilderMemoryUse::{Back, Write};
+
+    #[test]
+    fn builder_memory_keys_keep_full_addresses_and_operation_kind() {
+        let mut recording = Deferred::default();
+        let a = 0x1_0001_0000u64;
+        let b = a + (1u64 << 33);
+        let old = |at: u64| (at >> 2) & 0x7fff_ffff;
+        assert_eq!(old(a), old(b), "negative control: original key aliases");
+        for address in [a, b, b + (1u64 << 33)] {
+            assert!(recording.first_builder_memory_use(Write(address)));
+            assert!(recording.first_builder_memory_use(Back(address)));
+            assert!(!recording.first_builder_memory_use(Write(address)));
+            assert!(!recording.first_builder_memory_use(Back(address)));
+        }
+        let mut second = Deferred::default();
+        assert!(second.first_builder_memory_use(Write(a)));
+        recording = Deferred::default();
+        assert!(recording.first_builder_memory_use(Write(a)));
     }
 }
 
@@ -7190,6 +7221,11 @@ impl HostList {
     /// about `key` (a texture to bring up to date).
     pub(crate) fn first_use(&self, key: usize) -> bool {
         self.deferred().textures.insert(key)
+    }
+
+    /// Whether this BVH address and operation were prepared in this recording.
+    pub(crate) fn first_builder_memory_use(&self, key: crate::memory::BuilderMemoryUse) -> bool {
+        self.deferred().first_builder_memory_use(key)
     }
 
     /// Whether `key` was asked about ([`HostList::first_use`]) since the
