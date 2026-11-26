@@ -245,11 +245,6 @@ pub fn run(
         victory_core::ensure_outside_repo(Path::new(&dir))?;
     }
     let paths = crate::default_paths(paths)?;
-    // `VICTORY_HOST_MAX_WAVE=32`: translate as for a host whose waves have
-    // at most 32 lanes (as the runtime does on such a card).
-    if let Some(n) = std::env::var("VICTORY_HOST_MAX_WAVE").ok().and_then(|v| v.parse().ok()) {
-        victory_shader::emit::set_host_max_wave(n);
-    }
     // `VICTORY_HOST_RDNA=1`: as for an AMD RDNA card (`VICTORY_RDNA_FLOAT`).
     victory_shader::emit::set_host_rdna(std::env::var_os("VICTORY_HOST_RDNA").is_some_and(|v| v == "1"));
     let dll = validate.then(Validator::default_path).flatten();

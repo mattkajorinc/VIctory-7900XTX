@@ -92,7 +92,8 @@ enum Command {
         /// hex digits a run's log names a shader by, anywhere in a line);
         /// the containers with those hashes are translated into the
         /// cache and nothing else is done. Set `VICTORY_HOST_WAVE` and
-        /// `VICTORY_VIEW_LIMIT` to what the run's log says of the host.
+        /// `VICTORY_VIEW_LIMIT` to what the run's log says of the host
+        /// (`VICTORY_HOST_RDNA=1` on an AMD RDNA card).
         #[arg(long)]
         warm: Option<PathBuf>,
     },
@@ -205,8 +206,25 @@ fn main() -> Result<()> {
                 victory_shader::emit::set_view_heap_limit(n);
             }
             // `VICTORY_HOST_WAVE=32`: translate as for a GPU whose waves are at most 32 lanes
-            if let Some(n) = std::env::var("VICTORY_HOST_WAVE").ok().and_then(|v| v.parse().ok()) {
-                victory_shader::emit::set_host_max_wave(n);
+            // (as the run does on such a card). One name, read once for the whole command,
+            // `--warm` included; the old spelling still works and is said.
+            let wave = std::env::var("VICTORY_HOST_WAVE")
+                .ok()
+                .and_then(|v| v.parse().ok());
+            let old = std::env::var("VICTORY_HOST_MAX_WAVE")
+                .ok()
+                .and_then(|v| v.parse().ok());
+            match (wave, old) {
+                (Some(n), Some(_)) => {
+                    eprintln!("VICTORY_HOST_WAVE and VICTORY_HOST_MAX_WAVE are set: {n} wins");
+                    victory_shader::emit::set_host_max_wave(n);
+                }
+                (Some(n), None) => victory_shader::emit::set_host_max_wave(n),
+                (None, Some(n)) => {
+                    eprintln!("VICTORY_HOST_MAX_WAVE is VICTORY_HOST_WAVE now");
+                    victory_shader::emit::set_host_max_wave(n);
+                }
+                (None, None) => {}
             }
             if let Some(file) = warm {
                 return translate::warm(paths, &file, jobs);
