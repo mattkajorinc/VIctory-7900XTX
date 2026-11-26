@@ -275,6 +275,15 @@ fn learn(rip: usize, same: bool, can_look: bool) {
     };
     // (Not here, under a fault of the title's.)
     std::thread::spawn(move || {
+        // A title code address, so game-derived: rule #1 keeps it out of a source tree.
+        if let Err(e) = victory_core::ensure_outside_repo(std::path::Path::new(&file)) {
+            tracing::warn!(
+                dest = %file.to_string_lossy(),
+                error = %e,
+                "VICTORY_WRITE_SITES points into a source tree; not writing"
+            );
+            return;
+        }
         let Some((image, offset)) = place(rip) else {
             return;
         };
